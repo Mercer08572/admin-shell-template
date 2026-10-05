@@ -1,0 +1,79 @@
+name: Deploy to GitHub Pages
+
+# 只从 main 触发（手动触发用于重新发布）。
+#
+# 前提：仓库 Settings → Pages → Source 需要选 "GitHub Actions"（只需设置一次）。
+# 线上是纯静态托管，因此构建时注入 VITE_USE_MOCK=true，靠进程内 mock 支撑登录、
+# 列表与增删改的演示；要接真后端时把这一步的 mock 关掉，并把 /api/v1 交给网关转发
+# （Pages 本身不提供反向代理）。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 部署 Pages 需要 artifact 与 OIDC 的写权限；仓库代码只读。
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只保留一次 Pages 部署，新推送取消排队中的旧部署。
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
+      # 基路径不写死：项目站点由 Pages 给出 `/<仓库名>`，用户站点（<owner>.github.io）是空串。
+      # `${BASE%/}/` 做归一化，保证结果永远只有一个末尾斜杠（'' → '/'、'/x' → '/x/'），
+      # 这样仓库改名、或在用户站点里复用本模板都不需要改文件。
+      - name: 推导部署基路径
+        run: |
+          BASE="${{ steps.pages.outputs.base_path }}"
+          echo "PAGES_BASE_PATH=${BASE%/}/" >> "$GITHUB_ENV"
+          echo "PAGES_BASE_PATH=${BASE%/}/" >> "$GITHUB_STEP_SUMMARY"
+
+      # `pnpm build` 会先跑 vue-tsc 类型检查再构建，产物落在 dist/。
+      - name: 构建静态产物
+        run: pnpm build
+        env:
+          VITE_USE_MOCK: 'true'
+
+      # Pages 对未命中的路径会返回 404.html。放一份 SPA 入口过去，
+      # 深链（如 /<仓库名>/customers）刷新才能由 vue-router 接管，
+      # 而不是停在 Pages 的默认 404 页面上。产物在 dist/ 内，不入库。
+      - name: 生成 404 兜底
+        run: cp dist/index.html dist/404.html
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

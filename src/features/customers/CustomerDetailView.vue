@@ -24,6 +24,7 @@ import DataTable from '@/components/common/DataTable.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import StatusTag from '@/components/common/StatusTag.vue'
 import EntityFormDrawer from '@/components/crud/EntityFormDrawer.vue'
+import { useShellTabTitle } from '@/components/layout/shell-tab-title'
 import { contactColumns, contactFieldsForCustomer } from '@/features/customers/contact'
 import { customerConfig, customerFields, customerLevelLabel } from '@/features/customers/customer'
 import { toApiInput } from '@/lib/crud/entity-form'
@@ -98,6 +99,14 @@ function updateContact(id: number, body: Record<string, unknown>): Promise<Conta
 const pageTitle = computed(() =>
   customer.value ? `客户 ${customer.value.code} - ${customer.value.name}` : '客户详情',
 )
+
+/**
+ * 数据到达后把标签文案换成「客户 编码 - 名称」。
+ *
+ * 详情路由的 meta 标题固定是「客户详情」，打开多个客户详情后标签条上无法区分；
+ * 客户还没取到（或取失败）时传 null，标签保持 meta 标题。
+ */
+useShellTabTitle(() => (customer.value ? pageTitle.value : null))
 
 async function loadCustomer() {
   customerLoading.value = true

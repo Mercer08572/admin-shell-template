@@ -19,6 +19,14 @@ export interface ShellTab {
   path: string
   /** 标签文案，取自 `route.meta.title` */
   title: string
+  /**
+   * 页面在数据到达后自报的标题，优先于 `title`。
+   *
+   * 详情页的 meta 标题是静态的（如「客户详情」），同一路由打开多个标签时无法区分，
+   * 因此允许页面通过 `useShellTabTitle` 覆盖文案。它与 `title` 分开保存而不是直接改写，
+   * 是为了让 `openTab` 每次导航仍能按 meta 复位，而展示时优先取这里。
+   */
+  customTitle?: string
   /** 工作台为 false（不渲染关闭按钮） */
   closable: boolean
 }
@@ -57,6 +65,25 @@ export function openTab(tabs: readonly ShellTab[], tab: ShellTab): ShellTab[] {
   return tabs.map((item) =>
     item.key === tab.key ? { ...item, title: tab.title, path: tab.path } : item,
   )
+}
+
+/**
+ * 用页面自报的标题覆盖某个标签的文案。
+ *
+ * 与 `openTab` 分开：`openTab` 在每次导航时按 meta 标题复位，若直接改 `title`，
+ * 切回该标签的瞬间会闪回「客户详情」再变回真实标题；写到 `customTitle` 就不会。
+ * 标签不存在（数据晚于标签关闭才到达）或标题无变化时返回原引用，避免无意义重渲染。
+ */
+export function retitleTab(tabs: readonly ShellTab[], key: string, title: string): ShellTab[] {
+  const index = tabs.findIndex((item) => item.key === key)
+  if (index === -1) return tabs as ShellTab[]
+
+  const current = tabs[index]
+  if (!current || !title || current.customTitle === title) return tabs as ShellTab[]
+
+  const next = [...tabs]
+  next[index] = { ...current, customTitle: title }
+  return next
 }
 
 export interface CloseTabResult {

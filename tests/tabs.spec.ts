@@ -145,7 +145,8 @@ test('深链与刷新后重建为「工作台 + 当前页」', async ({ page }) 
 
   await expect(allTabs(page)).toHaveCount(2)
   await expect(tab(page, CUSTOMER_DETAIL)).toHaveClass(/n-tabs-tab--active/)
-  await expect(tab(page, CUSTOMER_DETAIL)).toContainText('客户详情')
+  // 标签先取 meta 标题，客户数据到达后由页面回写成「客户 编码 - 名称」
+  await expect(tab(page, CUSTOMER_DETAIL)).toContainText('客户 C-001 - 华南贸易')
   await expect(tab(page, CUSTOMER_DETAIL).locator('.n-tabs-tab__close')).toHaveCount(1)
 
   await page.reload()

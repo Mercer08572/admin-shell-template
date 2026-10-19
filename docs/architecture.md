@@ -75,6 +75,14 @@ apiRequest(path, options)
   重复进入（菜单、详情跳转、浏览器前进/后退、深链）都只是切回已有标签。
 - **不缓存页面状态**（未启用 `KeepAlive`）：切换标签会重新挂载视图并重新取数，
   宁可多一次请求，也不让跨标签读到过期数据。
+- 内容视图以 `route.path` 为 key（`<RouterView :key="route.path" />`）：vue-router 只在路由记录
+  变化时重建组件，同一条记录只换参数（`/customers/1` → `/customers/2`）会复用实例，
+  `setup` / `onMounted` 不再执行，页面会停在**上一个客户**的数据上。标签键本来就是 path，
+  key 与它对齐后「切标签 = 重新挂载」才真正成立。
+- 标签文案可被页面覆盖：详情页的 meta 标题是固定的（「客户详情」），多开详情标签无法区分。
+  页面用 `useShellTabTitle`（`components/layout/shell-tab-title.ts`）在数据到达后上报真实标题，
+  外壳写进 `customTitle` 并优先展示；`openTab` 仍按 meta 复位 `title`，
+  因此切回标签的瞬间不会闪回 meta 文案。数据未到或加载失败时保持 meta 标题。
 - 关闭当前页的标签时激活它左侧的标签（工作台保底）；关闭非当前页的标签不改变当前页面。
 - 标签集合不持久化：刷新或深链后重建为「工作台 + 当前页」；退出登录时外壳卸载，标签随之清空。
 

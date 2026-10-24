@@ -39,13 +39,16 @@ const redirectPath = computed(() => {
 })
 
 async function submit() {
+  if (submitting.value) return
+  submitting.value = true
+
   try {
     await formRef.value?.validate()
   } catch {
+    submitting.value = false
     return
   }
 
-  submitting.value = true
   try {
     await auth.login(form)
     const destination = auth.admin?.must_change_password ? '/account/password' : redirectPath.value
@@ -103,7 +106,6 @@ async function submit() {
             placeholder="请输入密码"
             autocomplete="current-password"
             aria-label="密码"
-            @keyup.enter="submit"
           >
             <template #prefix><LockKeyhole :size="17" /></template>
             <template #suffix>

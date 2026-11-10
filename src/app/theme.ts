@@ -16,4 +16,9 @@ export const naiveThemeOverrides: GlobalThemeOverrides = {
   Card: {
     borderRadius: '8px',
   },
+  LoadingBar: {
+    colorLoading: '#147d64',
+    colorError: '#d03050',
+    height: '2px',
+  },
 }

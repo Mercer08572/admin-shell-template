@@ -12,11 +12,12 @@ import {
   PanelLeftOpen,
   Users,
 } from '@lucide/vue'
-import { NIcon, type DropdownOption, type MenuOption, useMessage } from 'naive-ui'
-import { computed, h, provide, ref, watch, type Component } from 'vue'
+import { NIcon, useLoadingBar, type DropdownOption, type MenuOption, useMessage } from 'naive-ui'
+import { computed, h, onUnmounted, provide, ref, watch, type Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { getErrorMessage } from '@/api/error'
+import { bindPageProgress, unbindPageProgress } from '@/components/layout/page-progress'
 import { SHELL_TAB_TITLE_KEY } from '@/components/layout/shell-tab-title'
 import {
   closeTab,
@@ -33,6 +34,15 @@ const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const message = useMessage()
+
+/**
+ * 路由级加载进度条：本组件在 `NLoadingBarProvider` 子树内，能 inject 到 API；
+ * 路由模块拿不到组件上下文，因此把 API 注册到 `page-progress.ts` 供其调用。
+ */
+const loadingBar = useLoadingBar()
+bindPageProgress(loadingBar)
+onUnmounted(() => unbindPageProgress(loadingBar))
+
 const breakpoints = useBreakpoints({ mobile: 768 })
 const isMobile = breakpoints.smaller('mobile')
 const mobileMenuOpen = ref(false)

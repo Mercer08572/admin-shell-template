@@ -68,6 +68,18 @@ apiRequest(path, options)
 
 以上四条都有对应的端到端回归：`tests/tabs.spec.ts` 的「固定外壳 / 短页面」用例。
 
+### 页面加载进度条
+
+- 只覆盖**路由导航**（懒加载 chunk、路由守卫），不覆盖页面挂载后的数据请求；数据加载仍由页面的
+  `AsyncState` / `DataTable` loading 等状态承担。
+- `router.beforeEach` 调用 `startPageProgress()`，`afterEach` 调用 `finishPageProgress()`，
+  `onError` 调用 `failPageProgress()`；被新导航取消的旧导航（`NavigationFailureType.cancelled`）
+  不触发完成，避免把仍在加载的新页面误判为完成。
+- `useLoadingBar()` 依赖组件 `inject`，只能在 `NLoadingBarProvider` 的子树里调用；`router/index.ts`
+  不是组件，因此由 `AdminShell` 在 setup 里把 API 注册到
+  `src/components/layout/page-progress.ts`，路由模块只调用桥接层的函数。
+- 首次整页进入时外壳尚未挂载，不显示进度条；登录页 / 404 也不显示。
+
 ### 多标签规则
 
 - 内容区按多标签组织：工作台常驻第 0 位且不可关闭，其余页面按访问顺序追加、可单独关闭。

@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { useBreakpoints } from '@vueuse/core'
+/* global Element, HTMLElement, MouseEvent, window */
+import { onKeyStroke, useBreakpoints, useEventListener } from '@vueuse/core'
 import {
+  ArrowLeftToLine,
+  ArrowRightToLine,
   Building2,
   ChevronDown,
   CircleGauge,
+  CircleX,
   KeyRound,
   Layers3,
   LogOut,
   Menu,
   PanelLeftClose,
   PanelLeftOpen,
+  SquareX,
   Users,
 } from '@lucide/vue'
 import { NIcon, useLoadingBar, type DropdownOption, type MenuOption, useMessage } from 'naive-ui'
@@ -21,10 +26,12 @@ import { bindPageProgress, unbindPageProgress } from '@/components/layout/page-p
 import { SHELL_TAB_TITLE_KEY } from '@/components/layout/shell-tab-title'
 import {
   closeTab,
+  closeTabsBy,
   openTab,
   retitleTab,
   toTab,
   WORKBENCH_TAB,
+  type CloseMode,
   type ShellTab,
 } from '@/components/layout/shell-tabs'
 import { readSidebarCollapsed, writeSidebarCollapsed } from '@/components/layout/sidebar-collapsed'
@@ -159,9 +166,24 @@ function toggleSidebar() {
 const tabs = ref<ShellTab[]>([WORKBENCH_TAB])
 const activeTab = computed(() => route.path)
 
+/**
+ * 标签右键菜单的状态。
+ *
+ * `NTabs` 没有给单个标签挂事件的入口，因此菜单不使用 trigger 元素，
+ * 而是 `trigger="manual"` + 光标坐标（`x` / `y`，视口坐标，Naive 用 fixed 定位挂到 body）。
+ *
+ * `instance` 每次打开自增并作为 `NDropdown` 的 `key`：上一个菜单关闭时的离场动画
+ * （约 200ms）会让它的 DOM 短暂留在 body 上，这段时间内右键另一个标签，
+ * 新菜单会和正在离场的旧菜单抢同一实例——表现为「点了选项却没反应」。
+ * 换 key 让旧实例立刻卸载，新实例按新锚点重新挂载。
+ */
+let tabMenuInstance = 0
+const tabMenu = ref({ show: false, x: 0, y: 0, anchorKey: '', instance: 0 })
+
 watch(
   () => route.path,
   () => {
+    closeTabMenu()
     tabs.value = openTab(tabs.value, toTab({ path: route.path, meta: route.meta }))
   },
   { immediate: true },
@@ -186,6 +208,117 @@ function onTabClose(key: string | number) {
   const result = closeTab(tabs.value, String(key), route.path)
   tabs.value = result.tabs
   // 关闭的是当前页时跳到左邻标签；关闭其他标签不打扰当前页面
+  if (result.nextActive) void router.push(result.nextActive)
+}
+
+/**
+ * 在标签条上发起右键菜单。
+ *
+ * 用**容器级事件委托**而不是给每个标签绑事件：`NTab` 是 `inheritAttrs: false` 的声明式
+ * 组件（由 `NTabs` 内部渲染），事件落不到标签元素上。`data-name` 是 Naive 写在每个标签上的
+ * 路由键（e2e 也用它做选择器），点击关闭按钮时 `closest` 同样能找到所属标签。
+ *
+ * 空白处不拦截：那里保留浏览器原生菜单。
+ */
+function onTabbarContextMenu(event: MouseEvent) {
+  const element = event.target instanceof Element ? event.target.closest('.n-tabs-tab') : null
+  const anchorKey = element?.getAttribute('data-name')
+  if (!element || !anchorKey) return
+
+  event.preventDefault()
+  // 键盘（Shift+F10 / Menu 键）触发的 contextmenu 没有鼠标坐标，落在标签左下角
+  const rect = element.getBoundingClientRect()
+  const hasPointer = event.clientX !== 0 || event.clientY !== 0
+  tabMenu.value = {
+    show: true,
+    x: hasPointer ? event.clientX : rect.left,
+    y: hasPointer ? event.clientY : rect.bottom,
+    anchorKey,
+    instance: ++tabMenuInstance,
+  }
+}
+
+function setTabMenuShow(show: boolean) {
+  tabMenu.value.show = show
+}
+
+function closeTabMenu() {
+  tabMenu.value.show = false
+}
+
+/**
+ * 菜单必须跟着锚点走：点外部、按 Esc、窗口尺寸变化、标签条自身横向滚动都关掉它，
+ * 否则 fixed 定位的菜单会停在原地、和标签脱锚。
+ *
+ * 这里只监听**标签条内部**的滚动，不监听窗口 / 内容区：`.app-content` 是滚动的，
+ * 但它不会移动顶部的标签条；而窗口级 scroll 捕获会被「滚动到可视区域」这类
+ * 程序化滚动触发（点击菜单项自身也会产生），表现为菜单在 mousedown 前就被关掉、选项点不动。
+ */
+const tabbar = ref<HTMLElement | null>(null)
+
+useEventListener(window, 'resize', closeTabMenu)
+useEventListener(tabbar, 'scroll', closeTabMenu, { capture: true })
+onKeyStroke('Escape', () => {
+  if (tabMenu.value.show) closeTabMenu()
+})
+
+/**
+ * 菜单项与关闭模式的对应关系。
+ *
+ * 禁用态由标签集合实时算出：没有可关闭的目标就置灰，不靠“点了没反应”表达。
+ * 工作台的 `closable: false` 由 `closeTabsBy` 兜底，菜单层只是提前把无意义项灰掉。
+ */
+const TAB_MENU_MODES: Record<string, CloseMode> = {
+  'close-right': 'right',
+  'close-left': 'left',
+  'close-others': 'others',
+  'close-all': 'all',
+}
+
+const tabMenuOptions = computed<DropdownOption[]>(() => {
+  const anchorIndex = tabs.value.findIndex((tab) => tab.key === tabMenu.value.anchorKey)
+  const before = anchorIndex > 0 ? tabs.value.slice(0, anchorIndex) : []
+  const after = anchorIndex >= 0 ? tabs.value.slice(anchorIndex + 1) : []
+  const rest = anchorIndex >= 0 ? tabs.value.filter((_, index) => index !== anchorIndex) : []
+  const hasClosable = (list: ShellTab[]) => list.some((tab) => tab.closable)
+
+  return [
+    {
+      label: '关闭右侧',
+      key: 'close-right',
+      icon: icon(ArrowRightToLine),
+      disabled: !hasClosable(after),
+    },
+    {
+      label: '关闭左侧',
+      key: 'close-left',
+      icon: icon(ArrowLeftToLine),
+      disabled: !hasClosable(before),
+    },
+    {
+      label: '关闭其他',
+      key: 'close-others',
+      icon: icon(SquareX),
+      disabled: !hasClosable(rest),
+    },
+    {
+      label: '关闭所有',
+      key: 'close-all',
+      icon: icon(CircleX),
+      disabled: !hasClosable(tabs.value),
+    },
+  ]
+})
+
+function onTabMenuSelect(key: string | number) {
+  const mode = TAB_MENU_MODES[String(key)]
+  const anchorKey = tabMenu.value.anchorKey
+  closeTabMenu()
+  if (!mode || !anchorKey) return
+
+  const result = closeTabsBy(tabs.value, anchorKey, mode, route.path)
+  tabs.value = result.tabs
+  // 被关掉的标签里包含当前页时，跳到它左侧最近的幸存标签
   if (result.nextActive) void router.push(result.nextActive)
 }
 
@@ -296,7 +429,7 @@ async function onUserAction(key: string | number) {
         </NDropdown>
       </header>
 
-      <div class="tabbar">
+      <div ref="tabbar" class="tabbar" @contextmenu="onTabbarContextMenu">
         <NTabs
           :value="activeTab"
           type="card"
@@ -313,6 +446,23 @@ async function onUserAction(key: string | number) {
             :closable="tab.closable"
           />
         </NTabs>
+
+        <!--
+          标签右键菜单：manual 触发 + 光标坐标，菜单由 Naive 挂到 body 并 fixed 定位，
+          因此不受 `.tabbar` 的 `overflow: hidden` 裁剪。
+        -->
+        <NDropdown
+          :key="tabMenu.instance"
+          trigger="manual"
+          placement="bottom-start"
+          :show="tabMenu.show"
+          :x="tabMenu.x"
+          :y="tabMenu.y"
+          :options="tabMenuOptions"
+          @update:show="setTabMenuShow"
+          @clickoutside="closeTabMenu"
+          @select="onTabMenuSelect"
+        />
       </div>
 
       <div class="app-content">

@@ -94,11 +94,33 @@ export interface CloseTabResult {
 }
 
 /**
+ * 关闭后应该激活谁。
+ *
+ * 当前页仍然存在就不动（`null`）；被关掉时取**原顺序中它左侧最近的幸存标签**，
+ * 工作台保底。右侧标签不参与，否则用户会被甩到后面去——这是多标签工作台的通行直觉。
+ * 单个关闭与右键批量关闭共用这一条，避免两处各写一遍后走偏。
+ */
+function pickNextActive(
+  previous: readonly ShellTab[],
+  remaining: readonly ShellTab[],
+  activeKey: string,
+): string | null {
+  if (remaining.some((tab) => tab.key === activeKey)) return null
+
+  const activeIndex = previous.findIndex((tab) => tab.key === activeKey)
+  for (let index = activeIndex - 1; index >= 0; index -= 1) {
+    const candidate = previous[index]
+    if (candidate && remaining.some((tab) => tab.key === candidate.key)) return candidate.path
+  }
+  return WORKBENCH_PATH
+}
+
+/**
  * 关闭标签。
  *
  * 两条规则：
  * - 只有 `closable` 的标签能关（工作台点了也无效，且不能让激活项悬空）；
- * - 关掉**当前页**时激活它左侧的标签（工作台保底）——这是多标签工作台的通行直觉；
+ * - 关掉**当前页**时激活它左侧的标签（工作台保底）；
  *   关掉**非当前页**时当前页面不动，否则用户会被莫名其妙地跳走。
  */
 export function closeTab(
@@ -113,5 +135,47 @@ export function closeTab(
   const next = tabs.filter((item) => item.key !== key)
   if (key !== activeKey) return { tabs: next, nextActive: null }
 
-  return { tabs: next, nextActive: next[index - 1]?.path ?? WORKBENCH_PATH }
+  return { tabs: next, nextActive: pickNextActive(tabs, next, activeKey) }
+}
+
+/** 右键菜单的批量关闭模式，取值与菜单项一一对应（见 `AdminShell.vue`） */
+export type CloseMode = 'left' | 'right' | 'others' | 'all'
+
+/**
+ * 以某个标签为锚点批量关闭。
+ *
+ * 四种模式只影响「范围」，`closable` 永远是硬约束：工作台在任何模式下都不会被关掉，
+ * 即使锚点就在它右边、或者选的是「关闭所有」。锚点自身是否保留由模式决定：
+ * - `left` / `right` / `others`：锚点保留；
+ * - `all`：全部可关闭标签都关掉（锚点若可关闭也一起关）。
+ *
+ * 没有标签可关时返回**原数组引用**与 `nextActive: null`，调用方不会触发无意义的重渲染。
+ */
+export function closeTabsBy(
+  tabs: readonly ShellTab[],
+  anchorKey: string,
+  mode: CloseMode,
+  activeKey: string,
+): CloseTabResult {
+  const anchorIndex = tabs.findIndex((tab) => tab.key === anchorKey)
+  if (anchorIndex === -1) return { tabs: tabs as ShellTab[], nextActive: null }
+
+  const shouldClose = (tab: ShellTab, index: number): boolean => {
+    if (!tab.closable) return false
+    switch (mode) {
+      case 'left':
+        return index < anchorIndex
+      case 'right':
+        return index > anchorIndex
+      case 'others':
+        return index !== anchorIndex
+      case 'all':
+        return true
+    }
+  }
+
+  const next = tabs.filter((tab, index) => !shouldClose(tab, index))
+  if (next.length === tabs.length) return { tabs: tabs as ShellTab[], nextActive: null }
+
+  return { tabs: next, nextActive: pickNextActive(tabs, next, activeKey) }
 }

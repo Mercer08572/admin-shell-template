@@ -76,6 +76,11 @@ function allTabs(page: Page) {
   return page.locator('.n-tabs-tab')
 }
 
+/** 标签右键菜单项：Naive 把选项渲染成 `.n-dropdown-option-body`（禁用态也在这个元素上） */
+function tabMenuItem(page: Page, label: string) {
+  return page.locator('.n-dropdown-option-body').filter({ hasText: label })
+}
+
 /**
  * 从工作台的快捷入口跳转（两种宽度下都可见）。
  *
@@ -177,6 +182,97 @@ test('左侧菜单跟随当前页面：自动展开分组并高亮', async ({ pa
   await expect(page).toHaveURL(CUSTOMERS)
   await expect(menuItems.filter({ hasText: '客户' })).toHaveCount(1)
   await expect(selected.filter({ hasText: '客户' })).toHaveCount(1)
+})
+
+test('右键菜单以锚点批量关闭标签，工作台固定不受影响', async ({ page }) => {
+  await page.goto(WORKBENCH)
+  await openFromQuickLink(page, '客户列表', CUSTOMERS)
+
+  // 回到工作台，再从快捷入口打开详情，最后从用户下拉打开修改密码：凑出 4 个标签
+  await tab(page, WORKBENCH).click()
+  await expect(page).toHaveURL(WORKBENCH)
+  await openFromQuickLink(page, '客户详情示例', CUSTOMER_DETAIL)
+  await page.locator('.user-button').click()
+  await page.locator('.n-dropdown-option').filter({ hasText: '修改密码' }).click()
+  await expect(page).toHaveURL(PASSWORD)
+  await expect(allTabs(page)).toHaveCount(4)
+
+  // 右键中间标签：弹出四项菜单、顺序固定，且不切换当前页面
+  await tab(page, CUSTOMER_DETAIL).click({ button: 'right' })
+  await expect(page.locator('.n-dropdown-option-body')).toHaveCount(4)
+  await expect(page.locator('.n-dropdown-option-body__label')).toHaveText([
+    '关闭右侧',
+    '关闭左侧',
+    '关闭其他',
+    '关闭所有',
+  ])
+  await expect(page).toHaveURL(PASSWORD)
+
+  // 关闭右侧：右侧的「修改密码」被关掉；它是当前页，因此激活左邻「客户详情」
+  await tabMenuItem(page, '关闭右侧').click()
+  await expect(allTabs(page)).toHaveCount(3)
+  await expect(tab(page, PASSWORD)).toHaveCount(0)
+  await expect(page).toHaveURL(CUSTOMER_DETAIL)
+  await expect(tab(page, CUSTOMER_DETAIL)).toHaveClass(/n-tabs-tab--active/)
+
+  // 锚点已是末尾标签：关闭右侧置灰
+  await tab(page, CUSTOMER_DETAIL).click({ button: 'right' })
+  await expect(tabMenuItem(page, '关闭右侧')).toHaveClass(/n-dropdown-option-body--disabled/)
+
+  // 关闭左侧：左侧的「客户列表」被关掉，锚点与当前页都不动
+  await tabMenuItem(page, '关闭左侧').click()
+  await expect(allTabs(page)).toHaveCount(2)
+  await expect(tab(page, CUSTOMERS)).toHaveCount(0)
+  await expect(page).toHaveURL(CUSTOMER_DETAIL)
+
+  // 以工作台为锚点：左侧没有可关闭的标签 → 该项置灰
+  await tab(page, WORKBENCH).click({ button: 'right' })
+  await expect(tabMenuItem(page, '关闭左侧')).toHaveClass(/n-dropdown-option-body--disabled/)
+
+  // 关闭其他：只剩工作台；当前页「客户详情」被关掉 → 回到工作台
+  await tabMenuItem(page, '关闭其他').click()
+  await expect(allTabs(page)).toHaveCount(1)
+  await expect(page).toHaveURL(WORKBENCH)
+  await expect(tab(page, WORKBENCH)).toHaveClass(/n-tabs-tab--active/)
+
+  // 关闭所有：仍然保留工作台
+  await openFromQuickLink(page, '客户列表', CUSTOMERS)
+  await page.locator('.user-button').click()
+  await page.locator('.n-dropdown-option').filter({ hasText: '修改密码' }).click()
+  await expect(page).toHaveURL(PASSWORD)
+  await expect(allTabs(page)).toHaveCount(3)
+  await tab(page, CUSTOMERS).click({ button: 'right' })
+  await tabMenuItem(page, '关闭所有').click()
+  await expect(allTabs(page)).toHaveCount(1)
+  await expect(page).toHaveURL(WORKBENCH)
+  await expect(tab(page, WORKBENCH)).toHaveClass(/n-tabs-tab--active/)
+})
+
+test('右键菜单只在标签上弹出，Esc 与点击外部都能关闭', async ({ page }) => {
+  await page.goto(WORKBENCH)
+  await openFromQuickLink(page, '客户列表', CUSTOMERS)
+  await expect(allTabs(page)).toHaveCount(2)
+
+  // 右键标签：菜单弹出，当前页面保持不变
+  await tab(page, CUSTOMERS).click({ button: 'right' })
+  await expect(page.locator('.n-dropdown-option-body')).toHaveCount(4)
+  await expect(page).toHaveURL(CUSTOMERS)
+
+  await page.keyboard.press('Escape')
+  await expect(page.locator('.n-dropdown-option-body')).toHaveCount(0)
+  await expect(page).toHaveURL(CUSTOMERS)
+
+  // 空白处右键：保留浏览器原生菜单，不弹自定义菜单
+  const bar = await page.locator('.tabbar').boundingBox()
+  if (!bar) throw new Error('找不到标签条')
+  await page.locator('.tabbar').click({ button: 'right', position: { x: bar.width - 16, y: 10 } })
+  await expect(page.locator('.n-dropdown-option-body')).toHaveCount(0)
+
+  // 点击外部关闭
+  await tab(page, CUSTOMERS).click({ button: 'right' })
+  await expect(page.locator('.n-dropdown-option-body')).toHaveCount(4)
+  await page.locator('.app-content').click({ position: { x: 20, y: 20 } })
+  await expect(page.locator('.n-dropdown-option-body')).toHaveCount(0)
 })
 
 test.describe('固定外壳', () => {
